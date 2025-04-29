@@ -136,19 +136,67 @@ class EstCoordNet(nn.Module):
         h = self.conv7(h)           # -> (B, 3, N)
         pc_obj = h.permute(0, 2, 1)     # -> (B, N, 3)
 
-        pc_dev = pc - pc.mean(dim=1, keepdim=True)
-        pc_obj_dev = pc_obj - pc_obj.mean(dim=1, keepdim=True)
+        def solve_procrustes_single(P, Q):
+            """
+            P: (N, 3)
+            Q: (N, 3)
+            """
+            P_centred = P - P.mean(dim=0, keepdim=True)
+            Q_centred = Q - Q.mean(dim=0, keepdim=True)
 
-        U, S, Vt = torch.linalg.svd(pc_dev.permute(0, 2, 1).matmul(pc_obj_dev), full_matrices=False)
-        UVt = U.matmul(Vt)
-        det_UVt = torch.linalg.det(UVt)
-        D = torch.diag_embed(torch.stack([
-            torch.ones_like(det_UVt),
-            torch.ones_like(det_UVt),
-            det_UVt
-        ], dim=-1))
-        R_pred = U.matmul(D).matmul(Vt)
+            U, S, Vt = torch.linalg.svd(P_centred.t().matmul(Q_centred), full_matrices=False)
+            UVt = U.matmul(Vt)
+            det_UVt = torch.linalg.det(UVt)
+            D = torch.diag_embed(torch.stack([
+                torch.ones_like(det_UVt),
+                torch.ones_like(det_UVt),
+                det_UVt
+            ], dim=-1))
+            R_pred = U.matmul(D).matmul(Vt)
+            t_pred = (P.t() - R_pred.matmul(Q.t())).mean(dim=1)
 
-        t_pred = (pc.permute(0, 2, 1) - R_pred.matmul(pc_obj.permute(0, 2, 1))).mean(dim=2)
+            return t_pred, R_pred
+        
+        # RANSAC
+        max_iters = 1000
+        res_thresh = 0.01
+        end_thresh = 0.8
 
+        t_pred, R_pred = [], []
+        for b in range(B):
+            best_inliers = torch.zeros(N, device=pc.device)
+            best_inlier_count = 0
+            best_model = (
+                torch.zeros(3, device=pc.device),
+                torch.zeros(3, 3, device=pc.device)
+            )
+
+            for _ in range(max_iters):
+                idx = torch.randint(0, N, (3,), device=pc.device)
+                t_i, R_i = solve_procrustes_single(pc[b, idx], pc_obj[b, idx])
+
+                transformed = R_i.matmul(pc_obj[b].t()).t() + t_i
+                residuals = torch.norm(transformed - pc[b], dim=1)
+
+                inliers = residuals < res_thresh
+                inlier_count = inliers.sum(dim=0)
+
+                if inlier_count > best_inlier_count:
+                    best_inliers = inliers
+                    best_inlier_count = inlier_count
+                    best_model = (t_i, R_i)
+                
+                if best_inlier_count >= end_thresh * N:
+                    break
+            
+            if best_inlier_count >= 3:
+                t_final, R_final = solve_procrustes_single(pc[b, best_inliers], pc_obj[b, best_inliers])
+                t_pred.append(t_final)
+                R_pred.append(R_final)
+            else:
+                t_pred.append(best_model[0])
+                R_pred.append(best_model[1])
+        
+        t_pred = torch.stack(t_pred, dim=0)
+        R_pred = torch.stack(R_pred, dim=0)
         return t_pred, R_pred
