@@ -4,6 +4,7 @@ from typing import Tuple, Optional
 import numpy as np
 import torch
 from transforms3d.quaternions import quat2mat
+from copy import deepcopy
 
 from .type import Grasp
 from .constants import PC_MAX, PC_MIN
@@ -81,7 +82,19 @@ def transform_grasp_pose(
     Grasp
         The transformed grasp in the robot frame.
     """
-    raise NotImplementedError
+    # raise NotImplementedError
+
+    rot_cam = est_rot @ grasp.rot
+    trans_cam = est_rot @ grasp.trans + est_trans
+
+    rot_rbt = cam_rot @ rot_cam
+    trans_rbt = cam_rot @ trans_cam + cam_trans
+
+    transformed_grasp = deepcopy(grasp)
+    transformed_grasp.rot = rot_rbt
+    transformed_grasp.trans = trans_rbt
+
+    return transformed_grasp
 
 def get_pc(depth: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
     """
