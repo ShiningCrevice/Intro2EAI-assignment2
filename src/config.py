@@ -43,6 +43,10 @@ class Config:
     """the device to use for training, you can use cuda:0 if you have a gpu"""
     point_num: int = 1024
     """number of points sampled from the full observation point cloud"""
+    lambda_t: float = 1.0
+    """weight for translation loss"""
+    lambda_r: float = 1.0
+    """weight for rotation loss"""
 
     @classmethod
     def from_yaml(cls, path: str) -> "Config":

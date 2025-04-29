@@ -96,6 +96,12 @@ def main():
         checkpoint = torch.load(config.checkpoint, map_location="cpu")
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
+        # 将optimizer的所有参数搬到GPU
+        for state in optimizer.state.values():
+            if isinstance(state, dict):
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(device)
         cur_iter = checkpoint["iter"]
         for _ in range(cur_iter):
             scheduler.step()
